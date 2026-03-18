@@ -1,0 +1,77 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Cairo", ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  font-family: 'Cairo', sans-serif;
+  background-color: #f3f4f6;
+  direction: rtl;
+}
+
+/* Custom scrollbar for tables */
+.table-container::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.table-container::-webkit-scrollbar-track {
+  background: #f1f1f1; 
+  border-radius: 4px;
+}
+.table-container::-webkit-scrollbar-thumb {
+  background: #cbd5e1; 
+  border-radius: 4px;
+}
+.table-container::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8; 
+}
+
+@media print {
+  body {
+    background-color: white;
+  }
+  
+  /* Hide non-printable elements */
+  header, nav, .no-print {
+    display: none !important;
+  }
+
+  /* Ensure the table container doesn't scroll and shows everything */
+  .table-container {
+    overflow: visible !important;
+  }
+
+  /* Remove borders/shadows from main container */
+  .bg-white.rounded-xl.shadow-sm.border {
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Make sure the print header is visible */
+  .print-header {
+    display: flex !important;
+  }
+}
+
+.print-header {
+  display: none;
+}
+
+.pdf-exporting .print-header {
+  display: flex !important;
+}
+
+.pdf-exporting .no-print {
+  display: none !important;
+}
+
+.pdf-exporting.bg-white.rounded-xl.shadow-sm.border {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.pdf-exporting .table-container {
+  overflow: visible !important;
+}
