@@ -1,21 +1,51 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Users, UserCheck, BookOpen, LayoutDashboard, Plus, Trash2, Book, FileText, ClipboardList, Download, Upload, Save, Printer } from 'lucide-react';
+import { toPng } from 'html-to-image';
+import { asBlob } from 'html-docx-js-typescript';
+import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 // @ts-ignore
-import html2pdf from 'html2pdf.js';
 import { Staff, Course, Assignment, initialStaff, initialCourses, initialAssignments, StaffType, Degree } from './data';
+
+import ministryLogoImg from './assets/ministry-logo.png';
+import instituteLogoImg from './assets/institute-logo.png';
 
 type MainSection = 'dashboard' | 'management' | 'reports';
 type ManagementTab = 'assignments' | 'courses' | 'staff';
 type ReportTab = 'formB' | 'formC' | 'formA';
 
 export default function App() {
+  const ministryLogo = ministryLogoImg;
+  const instituteLogo = instituteLogoImg;
+
   const [activeSection, setActiveSection] = useState<MainSection>('dashboard');
   const [activeManagementTab, setActiveManagementTab] = useState<ManagementTab>('assignments');
   const [activeReportTab, setActiveReportTab] = useState<ReportTab>('formC');
   
   const [selectedDepartment, setSelectedDepartment] = useState<string>('قسم العلوم الاساسية');
+
+  const getAcademicYear = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    
+    let academicYear = '';
+    if (month >= 9) {
+      academicYear = `${year}/${year + 1}`;
+    } else {
+      academicYear = `${year - 1}/${year}`;
+    }
+    
+    let semester = '';
+    if (month >= 9 || month === 1) {
+      semester = 'الفصل الدراسي الأول';
+    } else {
+      semester = 'الفصل الدراسي الثاني';
+    }
+    
+    return `${academicYear} - ${semester}`;
+  };
   
   const [staffData, setStaffData] = useState<Record<string, Staff[]>>({
     'قسم العلوم الاساسية': initialStaff,
@@ -104,7 +134,7 @@ export default function App() {
         const newStaff = staffData.map((s: any) => ({
           id: String(s.ID),
           name: s.Name,
-          type: s.Type === 'external' ? 'external' : 'internal',
+          type: (s.Type === 'external' ? 'external' : 'internal') as StaffType,
           degree: s.Degree,
           department: s.Department || undefined
         }));
@@ -245,7 +275,7 @@ export default function App() {
 
             {/* Center Text */}
             <div className="text-center flex-1">
-              <h1 className="text-2xl font-bold text-blue-900">نظام إدارة أنصبة التدريس</h1>
+              <h1 className="text-2xl font-bold text-blue-900">نظام إدارة الخطة الدراسية</h1>
               <p className="text-sm text-gray-500 mt-1">المعهد العالي للهندسة والتكنولوجيا بكفر الشيخ</p>
             </div>
 
@@ -337,9 +367,9 @@ export default function App() {
               <SubNavButton active={activeReportTab === 'formB'} onClick={() => setActiveReportTab('formB')} icon={<FileText className="w-4 h-4 ml-2" />} label="نموذج ب (منتدبون)" />
             </div>
 
-            {activeReportTab === 'formA' && <StaffTableView staffData={getComputedStaff('internal')} title="بيان بأسماء و بيانات السادة القائمون بالتدريس المعينون بالمعهد" />}
-            {activeReportTab === 'formB' && <StaffTableView staffData={getComputedStaff('external')} title="بيان بأسماء و بيانات السادة القائمون بالتدريس المنتدبون من خارج المعهد" showDepartment />}
-            {activeReportTab === 'formC' && <CoursePlanView coursesPlan={getComputedCourses()} />}
+            {activeReportTab === 'formA' && <StaffTableView staffData={getComputedStaff('internal')} title="بيان بأسماء و بيانات السادة القائمون بالتدريس المعينون بالمعهد" ministryLogo={ministryLogo} instituteLogo={instituteLogo} department={selectedDepartment} academicYear={getAcademicYear()} />}
+            {activeReportTab === 'formB' && <StaffTableView staffData={getComputedStaff('external')} title="بيان بأسماء و بيانات السادة القائمون بالتدريس المنتدبون من خارج المعهد" showDepartment ministryLogo={ministryLogo} instituteLogo={instituteLogo} department={selectedDepartment} academicYear={getAcademicYear()} />}
+            {activeReportTab === 'formC' && <CoursePlanView coursesPlan={getComputedCourses()} ministryLogo={ministryLogo} instituteLogo={instituteLogo} department={selectedDepartment} academicYear={getAcademicYear()} />}
           </div>
         )}
       </main>
@@ -425,7 +455,7 @@ function DashboardView({
       </div>
       
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <h2 className="text-lg font-bold text-gray-900 mb-4">مرحباً بك في نظام إدارة أنصبة التدريس</h2>
+        <h2 className="text-lg font-bold text-gray-900 mb-4">مرحباً بك في نظام إدارة الخطة الدراسية</h2>
         <p className="text-gray-600 leading-relaxed">
           هذا النظام يتيح لك إدخال بيانات المقررات وأعضاء هيئة التدريس وتوزيع الساعات التدريسية عليهم.
           بمجرد إدخال البيانات في تبويبات الإدارة، سيقوم النظام تلقائياً بإنشاء النماذج والتقارير (أ، ب، جـ).
@@ -730,43 +760,51 @@ function AssignmentManagement({ assignmentList, setAssignmentList, staffList, co
 }
 
 // --- Report Views ---
-function PrintHeader({ title }: { title: string }) {
+function PrintHeader({ title, ministryLogo, instituteLogo, department, academicYear }: { title: string, ministryLogo?: string, instituteLogo?: string, department?: string, academicYear?: string }) {
   return (
     <table className="header-table" style={{ width: '100%', marginBottom: '20px', borderBottom: '4px solid black', paddingBottom: '15px', borderCollapse: 'collapse', border: 'none' }}>
       <tbody>
         <tr>
           {/* Right Logo (Ministry) */}
           <td style={{ width: '25%', textAlign: 'center', verticalAlign: 'top', border: 'none', padding: 0 }}>
-            <img 
-              src="https://yt3.googleusercontent.com/p-gOwvpL7qWfqZ0XAC-zsuWXg4ATxIxGCYtGtbsSSh2HGogCeFX17SaueyejOtnJywe32_93FQ=s900-c-k-c0x00ffffff-no-rj" 
-              alt="وزارة التعليم العالي والبحث العلمي" 
-              width={90}
-              height={90}
-              style={{ width: '90px', height: '90px', margin: '0 auto', marginBottom: '12px' }}
-              className="mx-auto mb-3 object-contain" 
-              crossOrigin="anonymous"
-            />
-            <p className="text-base font-bold text-black" style={{ margin: 0 }}>وزارة التعليم العالي<br/>والبحث العلمي</p>
+            {ministryLogo ? (
+              <img 
+                src={ministryLogo}
+                alt="وزارة التعليم العالي والبحث العلمي" 
+                width={90}
+                height={90}
+                style={{ width: '90px', height: '90px', margin: '0 auto', marginBottom: '12px' }}
+                className="mx-auto mb-3 object-contain" 
+              />
+            ) : (
+              <div style={{ width: '90px', height: '90px', margin: '0 auto', marginBottom: '12px' }}></div>
+            )}
+            <p className="text-xl font-bold text-black leading-none" style={{ margin: 0 }}>وزارة التعليم العالي<br/>والبحث العلمي</p>
           </td>
 
           {/* Center Text */}
           <td style={{ width: '50%', textAlign: 'center', verticalAlign: 'middle', border: 'none', padding: 0 }}>
-            <h1 className="text-3xl font-bold text-black mb-4" style={{ margin: '0 0 15px 0' }}>{title}</h1>
-            <p className="text-xl font-bold text-black" style={{ margin: 0 }}>المعهد العالي للهندسة والتكنولوجيا بكفر الشيخ</p>
+            <h1 className="text-4xl font-bold text-black mb-4 leading-none" style={{ margin: '0 0 15px 0' }}>{title}</h1>
+            <p className="text-2xl font-bold text-black leading-none" style={{ margin: '0 0 10px 0' }}>المعهد العالي للهندسة والتكنولوجيا بكفر الشيخ</p>
+            {department && <p className="text-xl font-bold text-black leading-none" style={{ margin: '0 0 10px 0' }}>{department}</p>}
+            {academicYear && <p className="text-xl font-bold text-black leading-none" style={{ margin: 0 }}>العام الدراسي {academicYear}</p>}
           </td>
 
           {/* Left Logo (Institute) */}
           <td style={{ width: '25%', textAlign: 'center', verticalAlign: 'top', border: 'none', padding: 0 }}>
-            <img 
-              src="https://mis.kfs-hiet.edu.eg/public//storage//img/settings/inb0K3BloxnrUhM86JVsw3yu4gscsWc8pH4kmlxR.png" 
-              alt="المعهد العالي للهندسة والتكنولوجيا بكفر الشيخ" 
-              width={90}
-              height={90}
-              style={{ width: '90px', height: '90px', margin: '0 auto', marginBottom: '12px' }}
-              className="mx-auto mb-3 object-contain" 
-              crossOrigin="anonymous"
-            />
-            <p className="text-base font-bold text-black" style={{ margin: 0 }}>المعهد العالي للهندسة<br/>والتكنولوجيا بكفر الشيخ</p>
+            {instituteLogo ? (
+              <img 
+                src={instituteLogo}
+                alt="المعهد العالي للهندسة والتكنولوجيا بكفر الشيخ" 
+                width={90}
+                height={90}
+                style={{ width: '90px', height: '90px', margin: '0 auto', marginBottom: '12px' }}
+                className="mx-auto mb-3 object-contain" 
+              />
+            ) : (
+              <div style={{ width: '90px', height: '90px', margin: '0 auto', marginBottom: '12px' }}></div>
+            )}
+            <p className="text-xl font-bold text-black leading-none" style={{ margin: 0 }}>المعهد العالي للهندسة<br/>والتكنولوجيا بكفر الشيخ</p>
           </td>
         </tr>
       </tbody>
@@ -775,32 +813,9 @@ function PrintHeader({ title }: { title: string }) {
 }
 
 const PrintableReport = ({ children, orientation = 'landscape' }: { children: React.ReactNode, orientation?: 'portrait' | 'landscape' }) => {
-  const innerRef = useRef<HTMLDivElement>(null);
-  const [scale, setScale] = useState(1);
-
-  useEffect(() => {
-    if (innerRef.current) {
-      const actualHeight = innerRef.current.offsetHeight;
-      const actualWidth = innerRef.current.offsetWidth;
-      // A4 dimensions at 96dpi: 210mm x 297mm -> ~794px x ~1123px
-      // Safe dimensions accounting for margins (10mm)
-      const safeHeight = orientation === 'landscape' ? 720 : 1020;
-      const safeWidth = orientation === 'landscape' ? 1050 : 720;
-      
-      const heightScale = actualHeight > safeHeight ? safeHeight / actualHeight : 1;
-      const widthScale = actualWidth > safeWidth ? safeWidth / actualWidth : 1;
-      
-      // Use the smaller scale to ensure it fits both horizontally and vertically
-      const finalScale = Math.min(heightScale, widthScale, 1);
-      setScale(finalScale);
-    }
-  }, [children, orientation]);
-
   return (
-    <div style={{ transform: `scale(${scale})`, transformOrigin: 'top right', width: '100%', direction: 'rtl' }}>
-      <div ref={innerRef} style={{ width: '100%', padding: '20px', backgroundColor: 'white' }}>
-        {children}
-      </div>
+    <div style={{ width: '100%', padding: '20px', backgroundColor: 'white', direction: 'rtl' }}>
+      {children}
     </div>
   );
 };
@@ -813,7 +828,7 @@ const exportToPDF = (content: React.ReactNode, filename: string, orientation: 'p
   loadingOverlay.style.left = '0';
   loadingOverlay.style.width = '100vw';
   loadingOverlay.style.height = '100vh';
-  loadingOverlay.style.backgroundColor = '#ffffff';
+  loadingOverlay.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
   loadingOverlay.style.display = 'flex';
   loadingOverlay.style.flexDirection = 'column';
   loadingOverlay.style.justifyContent = 'center';
@@ -826,71 +841,128 @@ const exportToPDF = (content: React.ReactNode, filename: string, orientation: 'p
   `;
   document.body.appendChild(loadingOverlay);
 
-  const container = document.createElement('div');
-  container.style.position = 'absolute';
-  container.style.left = '0';
-  container.style.top = '0';
-  container.style.zIndex = '9998'; // Just below the loading overlay
-  container.style.width = orientation === 'landscape' ? '297mm' : '210mm';
-  container.style.backgroundColor = '#ffffff';
-  container.style.padding = '20px';
-  container.dir = 'rtl';
-  document.body.appendChild(container);
+  // Create a container for rendering
+  const printContainer = document.createElement('div');
+  printContainer.id = 'pdf-render-container';
+  printContainer.dir = 'rtl';
+  printContainer.style.position = 'absolute';
+  printContainer.style.left = '0';
+  printContainer.style.top = '0';
+  printContainer.style.zIndex = '1000'; // Behind loading overlay (9999) but on screen
+  printContainer.style.width = orientation === 'landscape' ? '1123px' : '794px';
+  printContainer.style.backgroundColor = '#ffffff';
+  document.body.appendChild(printContainer);
 
-  const root = createRoot(container);
+  const root = createRoot(printContainer);
   root.render(
-    <div style={{ width: '100%', backgroundColor: '#ffffff' }}>
+    <PrintableReport orientation={orientation}>
       {content}
-    </div>
+    </PrintableReport>
   );
 
-  setTimeout(() => {
+  // Wait for render and images
+  setTimeout(async () => {
     try {
-      window.scrollTo(0, 0); // Ensure no scroll offset
-      
-      const opt = {
-        margin: [10, 10, 10, 10],
-        filename: `${filename}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: orientation }
-      };
+      // Wait for images to load with a timeout
+      const images = Array.from(printContainer.getElementsByTagName('img'));
+      await Promise.race([
+        Promise.all(images.map(img => {
+          if (img.complete) return Promise.resolve();
+          return new Promise(resolve => {
+            img.onload = resolve;
+            img.onerror = resolve;
+          });
+        })),
+        new Promise(resolve => setTimeout(resolve, 2000))
+      ]);
 
-      html2pdf().set(opt).from(container).save().then(() => {
-        root.unmount();
-        if (document.body.contains(container)) {
-          document.body.removeChild(container);
-        }
-        if (document.body.contains(loadingOverlay)) {
-          document.body.removeChild(loadingOverlay);
-        }
-      }).catch((err: any) => {
-        console.error('PDF Error:', err);
-        alert(`حدث خطأ أثناء إنشاء ملف PDF: ${err.message || err}`);
-        root.unmount();
-        if (document.body.contains(container)) {
-          document.body.removeChild(container);
-        }
-        if (document.body.contains(loadingOverlay)) {
-          document.body.removeChild(loadingOverlay);
-        }
+      // Generate image using html-to-image with a timeout
+      const dataUrl = await Promise.race([
+        toPng(printContainer, {
+          quality: 1,
+          pixelRatio: 2,
+          backgroundColor: '#ffffff',
+          width: printContainer.scrollWidth,
+          height: printContainer.scrollHeight,
+          imagePlaceholder: 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', // Prevent image fetching CORS errors
+          style: {
+            transform: 'scale(1)',
+            transformOrigin: 'top left'
+          }
+        }),
+        new Promise<string>((_, reject) => setTimeout(() => reject(new Error('PDF generation timed out. The images might be taking too long to load.')), 10000))
+      ]);
+
+      // Create PDF
+      const pdf = new jsPDF({
+        orientation: orientation,
+        unit: 'mm',
+        format: 'a4'
       });
 
-    } catch (err: any) {
-      console.error('PDF Error:', err);
-      alert(`حدث خطأ أثناء إنشاء ملف PDF: ${err.message || err}`);
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      
+      // Calculate image dimensions in PDF units
+      const imgProps = pdf.getImageProperties(dataUrl);
+      const imgHeightInPdf = (imgProps.height * pdfWidth) / imgProps.width;
+      
+      let heightLeft = imgHeightInPdf;
+      let position = 0;
+      
+      // Add first page
+      pdf.addImage(dataUrl, 'PNG', 0, position, pdfWidth, imgHeightInPdf);
+      heightLeft -= pdfHeight;
+      
+      // Add subsequent pages if needed
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeightInPdf;
+        pdf.addPage();
+        pdf.addImage(dataUrl, 'PNG', 0, position, pdfWidth, imgHeightInPdf);
+        heightLeft -= pdfHeight;
+      }
+      
+      pdf.save(`${filename}.pdf`);
+      
+      // Cleanup
       root.unmount();
-      if (document.body.contains(container)) {
-        document.body.removeChild(container);
+      if (document.body.contains(printContainer)) {
+        document.body.removeChild(printContainer);
       }
       if (document.body.contains(loadingOverlay)) {
         document.body.removeChild(loadingOverlay);
       }
+    } catch (err: any) {
+      console.error('PDF Error:', err);
+      if (document.body.contains(loadingOverlay)) {
+        loadingOverlay.innerHTML = `
+          <div style="color: #e74c3c; margin-bottom: 15px;">
+            <svg width="50" height="50" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+          </div>
+          <p style="font-family: sans-serif; font-weight: bold; color: #333; font-size: 18px; text-align: center; direction: rtl;">
+            حدث خطأ أثناء إنشاء ملف PDF<br/>
+            <span style="font-size: 14px; color: #666; font-weight: normal;">${err.message || err}</span>
+          </p>
+          <button id="close-error-btn" style="margin-top: 20px; padding: 8px 16px; background-color: #3498db; color: white; border: none; border-radius: 4px; cursor: pointer; font-family: sans-serif;">إغلاق</button>
+        `;
+        const closeBtn = document.getElementById('close-error-btn');
+        if (closeBtn) {
+          closeBtn.onclick = () => {
+            root.unmount();
+            if (document.body.contains(printContainer)) document.body.removeChild(printContainer);
+            if (document.body.contains(loadingOverlay)) document.body.removeChild(loadingOverlay);
+          };
+        }
+      }
     }
-  }, 1500); // Give React time to render and useEffect to apply scale
+  }, 1000); // Give React time to render
 };
 
-const exportToWord = (content: React.ReactNode, filename: string) => {
+const exportToWord = async (content: React.ReactNode, filename: string) => {
   const container = document.createElement('div');
   container.style.position = 'absolute';
   container.style.left = '-9999px';
@@ -903,53 +975,68 @@ const exportToWord = (content: React.ReactNode, filename: string) => {
     </div>
   );
 
-  setTimeout(() => {
-    const html = container.innerHTML;
-    const header = `
-      <html xmlns:o='urn:schemas-microsoft-com:office:office'
-            xmlns:w='urn:schemas-microsoft-com:office:word'
-            xmlns='http://www.w3.org/TR/REC-html40'>
-      <head>
-        <meta charset='utf-8'>
-        <title>${filename}</title>
-        <style>
-          @page WordSection1 {
-            size: 841.9pt 595.3pt; /* A4 Landscape */
-            mso-page-orientation: landscape;
-            margin: 0.5in;
-          }
-          div.WordSection1 { page: WordSection1; }
-          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; direction: rtl; font-size: 14pt; }
-          table { border-collapse: collapse; width: 100%; margin-top: 20px; }
-          th, td { border: 1px solid #000000; padding: 10px; text-align: center; vertical-align: middle; font-size: 12pt; font-weight: bold; color: #000000; }
-          th { background-color: #e5e7eb; font-size: 14pt; }
-          table.header-table { border: none !important; margin-top: 0; margin-bottom: 20px; border-bottom: 4px solid black !important; }
-          table.header-table td { border: none !important; padding: 0; }
-          .print-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 3px solid #000; padding-bottom: 15px; }
-          .text-center { text-align: center; }
-          .font-bold { font-weight: bold; }
-          .text-3xl { font-size: 28pt; font-weight: bold; color: #000000; }
-          .text-2xl { font-size: 24pt; font-weight: bold; color: #000000; }
-          .text-xl { font-size: 20pt; font-weight: bold; color: #000000; }
-          .text-lg { font-size: 18pt; font-weight: bold; color: #000000; }
-          .text-base { font-size: 16pt; font-weight: bold; color: #000000; }
-          .text-sm { font-size: 14pt; font-weight: bold; color: #000000; }
-          .text-xs { font-size: 12pt; font-weight: bold; color: #000000; }
-          .mb-2 { margin-bottom: 10px; }
-          .mb-3 { margin-bottom: 15px; }
-          .mb-4 { margin-bottom: 20px; }
-          img { width: 90px; height: 90px; }
-        </style>
-      </head><body><div class="WordSection1">
-    `;
-    const footer = "</div></body></html>";
-    const sourceHTML = header + html + footer;
+  // Wait for React to render
+  await new Promise(resolve => setTimeout(resolve, 500));
 
-    const blob = new Blob(['\ufeff', sourceHTML], { type: 'application/msword' });
-    const url = URL.createObjectURL(blob);
+  // Convert all images to Base64
+  const images = container.querySelectorAll('img');
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i];
+    try {
+      const response = await fetch(img.src);
+      const blob = await response.blob();
+      const reader = new FileReader();
+      const base64Url = await new Promise<string>((resolve) => {
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+      img.src = base64Url;
+    } catch (e) {
+      console.error('Failed to convert image to base64', e);
+    }
+  }
+
+  const html = container.innerHTML;
+  const sourceHTML = `
+    <!DOCTYPE html>
+    <html lang="ar" dir="rtl">
+    <head>
+      <meta charset='utf-8'>
+      <title>${filename}</title>
+      <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; direction: rtl; font-size: 12pt; line-height: 1; }
+        table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+        th, td { border: 1px solid #000000; padding: 2px 4px; text-align: center; vertical-align: middle; font-size: 12pt; font-weight: bold; color: #000000; line-height: 1; }
+        th { background-color: #e5e7eb; font-size: 14pt; }
+        table.header-table { border: none !important; margin-top: 0; margin-bottom: 10px; border-bottom: 2px solid black !important; }
+        table.header-table td { border: none !important; padding: 0; }
+        .print-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+        .text-center { text-align: center; }
+        .font-bold { font-weight: bold; }
+        .leading-tight { line-height: 1; }
+        .leading-none { line-height: 1; }
+        .text-4xl { font-size: 24pt; font-weight: bold; color: #000000; }
+        .text-3xl { font-size: 20pt; font-weight: bold; color: #000000; }
+        .text-2xl { font-size: 16pt; font-weight: bold; color: #000000; }
+        .text-xl { font-size: 14pt; font-weight: bold; color: #000000; }
+        .text-lg { font-size: 12pt; font-weight: bold; color: #000000; }
+        .text-base { font-size: 11pt; font-weight: bold; color: #000000; }
+        .text-sm { font-size: 10pt; font-weight: bold; color: #000000; }
+        .text-xs { font-size: 9pt; font-weight: bold; color: #000000; }
+        .mb-2 { margin-bottom: 5px; }
+        .mb-3 { margin-bottom: 8px; }
+        .mb-4 { margin-bottom: 10px; }
+        img { width: 70px; height: 70px; }
+      </style>
+    </head><body>${html}</body></html>
+  `;
+
+  try {
+    const blob = await asBlob(sourceHTML, { orientation: 'landscape' });
+    const url = URL.createObjectURL(blob as Blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `${filename}.doc`;
+    link.download = `${filename}.docx`;
     document.body.appendChild(link);
     link.click();
     
@@ -959,10 +1046,14 @@ const exportToWord = (content: React.ReactNode, filename: string) => {
       root.unmount();
       document.body.removeChild(container);
     }, 100);
-  }, 1000);
+  } catch (error) {
+    console.error('Failed to generate DOCX', error);
+    root.unmount();
+    document.body.removeChild(container);
+  }
 };
 
-function StaffTableView({ staffData, title, showDepartment = false }: { staffData: any[], title: string, showDepartment?: boolean }) {
+function StaffTableView({ staffData, title, showDepartment = false, ministryLogo, instituteLogo, department, academicYear }: { staffData: any[], title: string, showDepartment?: boolean, ministryLogo?: string, instituteLogo?: string, department?: string, academicYear?: string }) {
   if (staffData.length === 0) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center text-gray-500">
@@ -973,27 +1064,27 @@ function StaffTableView({ staffData, title, showDepartment = false }: { staffDat
 
   const reportContent = (
     <div className="bg-white p-4" dir="rtl">
-      <PrintHeader title={title} />
-      <table className="w-full text-base font-bold text-black text-center border-collapse border-2 border-black">
-        <thead className="text-lg text-black uppercase bg-gray-200 border-b-2 border-black">
+      <PrintHeader title={title} ministryLogo={ministryLogo} instituteLogo={instituteLogo} department={department} academicYear={academicYear} />
+      <table className="w-full text-xl font-bold text-black text-center border-collapse border-2 border-black leading-none">
+        <thead className="text-2xl text-black uppercase bg-gray-200 border-b-2 border-black">
           <tr>
-            <th rowSpan={2} className="px-4 py-3 border-2 border-black w-12 text-center">م</th>
-            <th rowSpan={2} className="px-4 py-3 border-2 border-black">الأسم</th>
-            <th rowSpan={2} className="px-4 py-3 border-2 border-black">الدرجة العلمية</th>
-            {showDepartment && <th rowSpan={2} className="px-4 py-3 border-2 border-black">جهة العمل</th>}
-            <th rowSpan={2} className="px-4 py-3 border-2 border-black">المواد التي يقوم بتدريسها</th>
-            <th rowSpan={2} className="px-4 py-3 border-2 border-black">الفرقة</th>
-            <th colSpan={3} className="px-4 py-2 border-2 border-black text-center bg-blue-100">ساعات النصاب</th>
-            <th colSpan={3} className="px-4 py-2 border-2 border-black text-center bg-green-100">ساعات بمكافأة</th>
-            <th rowSpan={2} className="px-4 py-3 text-center font-bold border-2 border-black">جملة</th>
+            <th rowSpan={2} className="px-4 py-1 border-2 border-black w-12 text-center">م</th>
+            <th rowSpan={2} className="px-4 py-1 border-2 border-black">الأسم</th>
+            <th rowSpan={2} className="px-4 py-1 border-2 border-black">الدرجة العلمية</th>
+            {showDepartment && <th rowSpan={2} className="px-4 py-1 border-2 border-black">جهة العمل</th>}
+            <th rowSpan={2} className="px-4 py-1 border-2 border-black">المواد التي يقوم بتدريسها</th>
+            <th rowSpan={2} className="px-4 py-1 border-2 border-black">الفرقة</th>
+            <th colSpan={3} className="px-4 py-1 border-2 border-black text-center bg-blue-100">ساعات النصاب</th>
+            <th colSpan={3} className="px-4 py-1 border-2 border-black text-center bg-green-100">ساعات بمكافأة</th>
+            <th rowSpan={2} className="px-4 py-1 text-center font-bold border-2 border-black">جملة</th>
           </tr>
           <tr className="bg-gray-100">
-            <th className="px-2 py-2 border-2 border-black text-center">نظري</th>
-            <th className="px-2 py-2 border-2 border-black text-center">درس</th>
-            <th className="px-2 py-2 border-2 border-black text-center">اشراف</th>
-            <th className="px-2 py-2 border-2 border-black text-center">نظري</th>
-            <th className="px-2 py-2 border-2 border-black text-center">درس</th>
-            <th className="px-2 py-2 border-2 border-black text-center">اشراف</th>
+            <th className="px-2 py-1 border-2 border-black text-center">نظري</th>
+            <th className="px-2 py-1 border-2 border-black text-center">درس</th>
+            <th className="px-2 py-1 border-2 border-black text-center">اشراف</th>
+            <th className="px-2 py-1 border-2 border-black text-center">نظري</th>
+            <th className="px-2 py-1 border-2 border-black text-center">درس</th>
+            <th className="px-2 py-1 border-2 border-black text-center">اشراف</th>
           </tr>
         </thead>
         <tbody>
@@ -1010,25 +1101,25 @@ function StaffTableView({ staffData, title, showDepartment = false }: { staffDat
                 <tr key={`${staff.id}-${aIndex}`} className="border-b-2 border-black hover:bg-gray-50 transition-colors">
                   {aIndex === 0 && (
                     <>
-                      <td rowSpan={rowSpan} className="px-4 py-3 border-2 border-black text-center font-bold">{index + 1}</td>
-                      <td rowSpan={rowSpan} className="px-4 py-3 border-2 border-black font-bold text-black">{staff.name}</td>
-                      <td rowSpan={rowSpan} className="px-4 py-3 border-2 border-black font-bold">{staff.degree}</td>
-                      {showDepartment && <td rowSpan={rowSpan} className="px-4 py-3 border-2 border-black font-bold">{staff.department}</td>}
+                      <td rowSpan={rowSpan} className="px-4 py-1 border-2 border-black text-center font-bold">{index + 1}</td>
+                      <td rowSpan={rowSpan} className="px-4 py-1 border-2 border-black font-bold text-black">{staff.name}</td>
+                      <td rowSpan={rowSpan} className="px-4 py-1 border-2 border-black font-bold">{staff.degree}</td>
+                      {showDepartment && <td rowSpan={rowSpan} className="px-4 py-1 border-2 border-black font-bold">{staff.department}</td>}
                     </>
                   )}
-                  <td className="px-4 py-3 border-2 border-black font-bold">{assignment.course}</td>
-                  <td className="px-4 py-3 border-2 border-black font-bold text-black">{assignment.year}</td>
+                  <td className="px-4 py-1 border-2 border-black font-bold">{assignment.course}</td>
+                  <td className="px-4 py-1 border-2 border-black font-bold text-black">{assignment.year}</td>
                   
-                  <td className="px-2 py-3 border-2 border-black text-center font-bold">{assignment.theory || '-'}</td>
-                  <td className="px-2 py-3 border-2 border-black text-center font-bold">{assignment.exercise || '-'}</td>
-                  <td className="px-2 py-3 border-2 border-black text-center font-bold">{assignment.supervision || '-'}</td>
+                  <td className="px-2 py-1 border-2 border-black text-center font-bold">{assignment.theory || '-'}</td>
+                  <td className="px-2 py-1 border-2 border-black text-center font-bold">{assignment.exercise || '-'}</td>
+                  <td className="px-2 py-1 border-2 border-black text-center font-bold">{assignment.supervision || '-'}</td>
                   
-                  <td className="px-2 py-3 border-2 border-black text-center font-bold bg-green-50">{assignment.bonusTheory || '-'}</td>
-                  <td className="px-2 py-3 border-2 border-black text-center font-bold bg-green-50">{assignment.bonusExercise || '-'}</td>
-                  <td className="px-2 py-3 border-2 border-black text-center font-bold bg-green-50">{assignment.bonusSupervision || '-'}</td>
+                  <td className="px-2 py-1 border-2 border-black text-center font-bold bg-green-50">{assignment.bonusTheory || '-'}</td>
+                  <td className="px-2 py-1 border-2 border-black text-center font-bold bg-green-50">{assignment.bonusExercise || '-'}</td>
+                  <td className="px-2 py-1 border-2 border-black text-center font-bold bg-green-50">{assignment.bonusSupervision || '-'}</td>
                   
                   {aIndex === 0 && (
-                    <td rowSpan={rowSpan} className="px-4 py-3 text-center font-bold text-black bg-blue-100 border-2 border-black text-lg">
+                    <td rowSpan={rowSpan} className="px-4 py-1 text-center font-bold text-black bg-blue-100 border-2 border-black text-2xl">
                       {staff.assignments.reduce((acc: number, curr: any) => acc + curr.theory + curr.exercise + curr.supervision + curr.bonusTheory + curr.bonusExercise + curr.bonusSupervision, 0)}
                     </td>
                   )}
@@ -1133,7 +1224,7 @@ function StaffTableView({ staffData, title, showDepartment = false }: { staffDat
   );
 }
 
-function CoursePlanView({ coursesPlan }: { coursesPlan: any[] }) {
+function CoursePlanView({ coursesPlan, ministryLogo, instituteLogo, department, academicYear }: { coursesPlan: any[], ministryLogo?: string, instituteLogo?: string, department?: string, academicYear?: string }) {
   if (coursesPlan.length === 0) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center text-gray-500">
@@ -1144,22 +1235,22 @@ function CoursePlanView({ coursesPlan }: { coursesPlan: any[] }) {
 
   const reportContent = (
     <div className="bg-white p-4" dir="rtl">
-      <PrintHeader title="بيان بتوزيع ساعات الخطة الدراسية (نموذج جـ)" />
-      <table className="w-full text-base font-bold text-black text-center border-collapse border-2 border-black">
-        <thead className="text-lg text-black uppercase bg-gray-200 border-b-2 border-black">
+      <PrintHeader title="بيان بتوزيع ساعات الخطة الدراسية (نموذج جـ)" ministryLogo={ministryLogo} instituteLogo={instituteLogo} department={department} academicYear={academicYear} />
+      <table className="w-full text-xl font-bold text-black text-center border-collapse border-2 border-black leading-none">
+        <thead className="text-2xl text-black uppercase bg-gray-200 border-b-2 border-black">
           <tr>
-            <th rowSpan={2} className="px-4 py-3 border-2 border-black">المادة</th>
-            <th colSpan={2} className="px-4 py-2 border-2 border-black text-center bg-gray-300">الساعات الدراسية اللائحة</th>
-            <th rowSpan={2} className="px-4 py-3 border-2 border-black text-center">القائمون بالتدريس</th>
-            <th rowSpan={2} className="px-4 py-3 border-2 border-black text-center">الدرجة</th>
-            <th colSpan={2} className="px-4 py-2 border-2 border-black text-center bg-blue-100">توزيع الساعات الدراسية</th>
-            <th rowSpan={2} className="px-4 py-3 text-center border-2 border-black">إجمالي المادة</th>
+            <th rowSpan={2} className="px-4 py-1 border-2 border-black">المادة</th>
+            <th colSpan={2} className="px-4 py-1 border-2 border-black text-center bg-gray-300">الساعات الدراسية اللائحة</th>
+            <th rowSpan={2} className="px-4 py-1 border-2 border-black text-center">القائمون بالتدريس</th>
+            <th rowSpan={2} className="px-4 py-1 border-2 border-black text-center">الدرجة</th>
+            <th colSpan={2} className="px-4 py-1 border-2 border-black text-center bg-blue-100">توزيع الساعات الدراسية</th>
+            <th rowSpan={2} className="px-4 py-1 text-center border-2 border-black">إجمالي المادة</th>
           </tr>
           <tr className="bg-gray-100">
-            <th className="px-2 py-2 border-2 border-black text-center">محاضرة</th>
-            <th className="px-2 py-2 border-2 border-black text-center">درس</th>
-            <th className="px-2 py-2 border-2 border-black text-center">محاضرة</th>
-            <th className="px-2 py-2 border-2 border-black text-center">درس</th>
+            <th className="px-2 py-1 border-2 border-black text-center">محاضرة</th>
+            <th className="px-2 py-1 border-2 border-black text-center">درس</th>
+            <th className="px-2 py-1 border-2 border-black text-center">محاضرة</th>
+            <th className="px-2 py-1 border-2 border-black text-center">درس</th>
           </tr>
         </thead>
         <tbody>
@@ -1171,20 +1262,20 @@ function CoursePlanView({ coursesPlan }: { coursesPlan: any[] }) {
               <tr key={`${cIndex}-${sIndex}`} className="border-b-2 border-black hover:bg-gray-50 transition-colors">
                 {sIndex === 0 && (
                   <>
-                    <td rowSpan={rowSpan} className="px-4 py-3 border-2 border-black font-bold text-black">{course.name}</td>
-                    <td rowSpan={rowSpan} className="px-4 py-3 border-2 border-black text-center font-bold bg-gray-100">{course.lectures}</td>
-                    <td rowSpan={rowSpan} className="px-4 py-3 border-2 border-black text-center font-bold bg-gray-100">{course.exercises}</td>
+                    <td rowSpan={rowSpan} className="px-4 py-1 border-2 border-black font-bold text-black">{course.name}</td>
+                    <td rowSpan={rowSpan} className="px-4 py-1 border-2 border-black text-center font-bold bg-gray-100">{course.lectures}</td>
+                    <td rowSpan={rowSpan} className="px-4 py-1 border-2 border-black text-center font-bold bg-gray-100">{course.exercises}</td>
                   </>
                 )}
                 
-                <td className="px-4 py-3 border-2 border-black font-bold">{staff.name}</td>
-                <td className="px-4 py-3 border-2 border-black font-bold text-black">{staff.degree}</td>
+                <td className="px-4 py-1 border-2 border-black font-bold">{staff.name}</td>
+                <td className="px-4 py-1 border-2 border-black font-bold text-black">{staff.degree}</td>
                 
-                <td className="px-2 py-3 border-2 border-black text-center font-bold">{staff.theory || '-'}</td>
-                <td className="px-2 py-3 border-2 border-black text-center font-bold">{staff.exercise || '-'}</td>
+                <td className="px-2 py-1 border-2 border-black text-center font-bold">{staff.theory || '-'}</td>
+                <td className="px-2 py-1 border-2 border-black text-center font-bold">{staff.exercise || '-'}</td>
                 
                 {sIndex === 0 && (
-                  <td rowSpan={rowSpan} className="px-4 py-3 text-center font-bold text-black bg-yellow-100 border-2 border-black text-lg">
+                  <td rowSpan={rowSpan} className="px-4 py-1 text-center font-bold text-black bg-yellow-100 border-2 border-black text-2xl">
                     {totalCourseHours}
                   </td>
                 )}
